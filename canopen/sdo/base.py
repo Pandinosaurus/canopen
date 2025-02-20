@@ -1,15 +1,16 @@
+from __future__ import annotations
+
 import binascii
-from typing import Iterable, Union
-try:
-    from collections.abc import Mapping
-except ImportError:
-    from collections import Mapping
+from collections.abc import Mapping
+from typing import Iterator, Optional, Union
 
-from .. import objectdictionary
-from .. import variable
+import canopen.network
+from canopen import objectdictionary
+from canopen import variable
+from canopen.utils import pretty_index
 
 
-class CrcXmodem(object):
+class CrcXmodem:
     """Mimics CrcXmodem from crccheck."""
 
     def __init__(self):
@@ -43,21 +44,21 @@ class SdoBase(Mapping):
         """
         self.rx_cobid = rx_cobid
         self.tx_cobid = tx_cobid
-        self.network = None
+        self.network: canopen.network.Network = canopen.network._UNINITIALIZED_NETWORK
         self.od = od
 
     def __getitem__(
         self, index: Union[str, int]
-    ) -> Union["Variable", "Array", "Record"]:
+    ) -> Union[SdoVariable, SdoArray, SdoRecord]:
         entry = self.od[index]
-        if isinstance(entry, objectdictionary.Variable):
-            return Variable(self, entry)
-        elif isinstance(entry, objectdictionary.Array):
-            return Array(self, entry)
-        elif isinstance(entry, objectdictionary.Record):
-            return Record(self, entry)
+        if isinstance(entry, objectdictionary.ODVariable):
+            return SdoVariable(self, entry)
+        elif isinstance(entry, objectdictionary.ODArray):
+            return SdoArray(self, entry)
+        elif isinstance(entry, objectdictionary.ODRecord):
+            return SdoRecord(self, entry)
 
-    def __iter__(self) -> Iterable[int]:
+    def __iter__(self) -> Iterator[int]:
         return iter(self.od)
 
     def __len__(self) -> int:
@@ -65,6 +66,19 @@ class SdoBase(Mapping):
 
     def __contains__(self, key: Union[int, str]) -> bool:
         return key in self.od
+
+    def get_variable(
+        self, index: Union[int, str], subindex: int = 0
+    ) -> Optional[SdoVariable]:
+        """Get the variable object at specified index (and subindex if applicable).
+
+        :return: SdoVariable if found, else `None`
+        """
+        obj = self.get(index)
+        if isinstance(obj, SdoVariable):
+            return obj
+        elif isinstance(obj, (SdoRecord, SdoArray)):
+            return obj.get(subindex)
 
     def upload(self, index: int, subindex: int) -> bytes:
         raise NotImplementedError()
@@ -79,35 +93,44 @@ class SdoBase(Mapping):
         raise NotImplementedError()
 
 
-class Record(Mapping):
+class SdoRecord(Mapping):
 
-    def __init__(self, sdo_node: SdoBase, od: objectdictionary.ObjectDictionary):
+    def __init__(self, sdo_node: SdoBase, od: objectdictionary.ODRecord):
         self.sdo_node = sdo_node
         self.od = od
 
-    def __getitem__(self, subindex: Union[int, str]) -> "Variable":
-        return Variable(self.sdo_node, self.od[subindex])
+    def __repr__(self) -> str:
+        return f"<{type(self).__qualname__} {self.od.name!r} at {pretty_index(self.od.index)}>"
 
-    def __iter__(self) -> Iterable[int]:
-        return iter(self.od)
+    def __getitem__(self, subindex: Union[int, str]) -> SdoVariable:
+        return SdoVariable(self.sdo_node, self.od[subindex])
+
+    def __iter__(self) -> Iterator[int]:
+        # Skip the "highest subindex" entry, which is not part of the data
+        return filter(None, iter(self.od))
 
     def __len__(self) -> int:
-        return len(self.od)
+        # Skip the "highest subindex" entry, which is not part of the data
+        return len(self.od) - int(0 in self.od)
 
     def __contains__(self, subindex: Union[int, str]) -> bool:
         return subindex in self.od
 
 
-class Array(Mapping):
+class SdoArray(Mapping):
 
-    def __init__(self, sdo_node: SdoBase, od: objectdictionary.ObjectDictionary):
+    def __init__(self, sdo_node: SdoBase, od: objectdictionary.ODArray):
         self.sdo_node = sdo_node
         self.od = od
 
-    def __getitem__(self, subindex: Union[int, str]) -> "Variable":
-        return Variable(self.sdo_node, self.od[subindex])
+    def __repr__(self) -> str:
+        return f"<{type(self).__qualname__} {self.od.name!r} at {pretty_index(self.od.index)}>"
 
-    def __iter__(self) -> Iterable[int]:
+    def __getitem__(self, subindex: Union[int, str]) -> SdoVariable:
+        return SdoVariable(self.sdo_node, self.od[subindex])
+
+    def __iter__(self) -> Iterator[int]:
+        # Skip the "highest subindex" entry, which is not part of the data
         return iter(range(1, len(self) + 1))
 
     def __len__(self) -> int:
@@ -117,10 +140,10 @@ class Array(Mapping):
         return 0 <= subindex <= len(self)
 
 
-class Variable(variable.Variable):
+class SdoVariable(variable.Variable):
     """Access object dictionary variable values using SDO protocol."""
 
-    def __init__(self, sdo_node: SdoBase, od: objectdictionary.ObjectDictionary):
+    def __init__(self, sdo_node: SdoBase, od: objectdictionary.ODVariable):
         self.sdo_node = sdo_node
         variable.Variable.__init__(self, od)
 
@@ -130,6 +153,14 @@ class Variable(variable.Variable):
     def set_data(self, data: bytes):
         force_segment = self.od.data_type == objectdictionary.DOMAIN
         self.sdo_node.download(self.od.index, self.od.subindex, data, force_segment)
+
+    @property
+    def writable(self) -> bool:
+        return self.od.writable
+
+    @property
+    def readable(self) -> bool:
+        return self.od.readable
 
     def open(self, mode="rb", encoding="ascii", buffering=1024, size=None,
              block_transfer=False, request_crc_support=True):
@@ -164,3 +195,9 @@ class Variable(variable.Variable):
         """
         return self.sdo_node.open(self.od.index, self.od.subindex, mode,
                                   encoding, buffering, size, block_transfer, request_crc_support=request_crc_support)
+
+
+# For compatibility
+Record = SdoRecord
+Array = SdoArray
+Variable = SdoVariable

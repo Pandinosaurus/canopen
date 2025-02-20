@@ -1,8 +1,11 @@
-import struct
 import logging
+import struct
 import threading
 import time
 from typing import Callable, List, Optional
+
+import canopen.network
+
 
 # Error code, error register, vendor specific data
 EMCY_STRUCT = struct.Struct("<HB5s")
@@ -10,7 +13,7 @@ EMCY_STRUCT = struct.Struct("<HB5s")
 logger = logging.getLogger(__name__)
 
 
-class EmcyConsumer(object):
+class EmcyConsumer:
 
     def __init__(self):
         #: Log of all received EMCYs for this node
@@ -79,10 +82,10 @@ class EmcyConsumer(object):
                     return emcy
 
 
-class EmcyProducer(object):
+class EmcyProducer:
 
     def __init__(self, cob_id: int):
-        self.network = None
+        self.network: canopen.network.Network = canopen.network._UNINITIALIZED_NETWORK
         self.cob_id = cob_id
 
     def send(self, code: int, register: int = 0, data: bytes = b""):
@@ -130,7 +133,7 @@ class EmcyError(Exception):
         return ""
 
     def __str__(self):
-        text = "Code 0x{:04X}".format(self.code)
+        text = f"Code 0x{self.code:04X}"
         description = self.get_desc()
         if description:
             text = text + ", " + description

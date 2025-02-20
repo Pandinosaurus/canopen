@@ -1,10 +1,10 @@
 import logging
-import time
+import queue
 import struct
-try:
-    import queue
-except ImportError:
-    import Queue as queue
+import time
+
+import canopen.network
+
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +65,7 @@ ListMessageNeedResponse = [
 ]
 
 
-class LssMaster(object):
+class LssMaster:
     """The Master of Layer Setting Services"""
 
     LSS_TX_COBID = 0x7E5
@@ -81,8 +81,8 @@ class LssMaster(object):
     #: Max time in seconds to wait for response from server
     RESPONSE_TIMEOUT = 0.5
 
-    def __init__(self):
-        self.network = None
+    def __init__(self) -> None:
+        self.network: canopen.network.Network = canopen.network._UNINITIALIZED_NETWORK
         self._node_id = 0
         self._data = None
         self.responses = queue.Queue()
@@ -242,12 +242,12 @@ class LssMaster(object):
         self.__send_command(message)
 
     def fast_scan(self):
-        """This command sends a series of fastscan message 
+        """This command sends a series of fastscan message
         to find unconfigured slave with lowest number of LSS idenities
 
         :return:
             True if a slave is found.
-            False if there is no candidate. 
+            False if there is no candidate.
             list is the LSS identities [vendor_id, product_code, revision_number, serial_number]
         :rtype: bool, list
         """
@@ -356,7 +356,7 @@ class LssMaster(object):
             raise LssError("Response message is not for the request")
 
         if error_code != ERROR_NONE:
-            error_msg = "LSS Error: %d" % error_code
+            error_msg = f"LSS Error: {error_code}"
             raise LssError(error_msg)
 
     def __send_command(self, message):
@@ -371,9 +371,7 @@ class LssMaster(object):
         :rtype: bytes
         """
 
-        message_str = " ".join(["{:02x}".format(x) for x in message])
-        logger.info(
-            "Sending LSS message {}".format(message_str))
+        logger.info("Sending LSS message %s", message.hex(" ").upper())
 
         response = None
         if not self.responses.empty():
